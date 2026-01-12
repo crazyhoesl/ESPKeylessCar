@@ -1,4 +1,4 @@
-# ESP32 Dynamic iPhone Keyless System v7
+# ESP32 Dynamic iPhone Keyless System v7.1
 
 🚗 **Smart Proximity-Based Car Access Control using iPhone BLE**
 
@@ -8,12 +8,15 @@ An advanced ESP32-based keyless entry system that automatically detects iPhone p
 
 - 🔑 **Dynamic IRK Learning**: No hardcoded device IDs - learns iPhone IRKs through secure BLE pairing
 - 📱 **iPhone Native Integration**: Appears as fitness tracker in iPhone Bluetooth settings
-- 💾 **Persistent Storage**: Supports up to 10 devices stored in EEPROM
+- 💾 **Persistent Storage**: Supports up to 10 devices stored in NVS (wear-leveled flash)
 - 🔒 **Secure Authentication**: Uses iPhone's BLE Identity Resolution Keys for device verification
 - 🚗 **Automotive Ready**: Robust proximity detection with hysteresis filtering
 - 🔄 **Auto-Recovery**: Smart restart logic prevents BLE stack issues
 - 📡 **Advanced BLE Stack**: Handles complex server-to-scanner mode transitions
 - 🐕 **Watchdog Protection**: Hardware watchdog prevents system lockups
+- 🌐 **Web Dashboard**: Real-time device management and activity log via browser
+- 📶 **WiFi Setup Portal**: Easy first-time WiFi configuration via captive portal
+- ⚙️ **Configurable Settings**: Adjust RSSI thresholds, timeouts via web interface
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=kE2PSPX0mT0" target="_blank">
@@ -26,18 +29,58 @@ An advanced ESP32-based keyless entry system that automatically detects iPhone p
   </a>
 </p>
 
+## 🌐 Web Dashboard & WiFi Setup
+
+### First-Time WiFi Configuration (v7.1+)
+
+On first boot (or after factory reset), the ESP32 creates a WiFi access point for easy configuration:
+
+1. **Connect to WiFi**: `ESP32-Keyless-Setup` (Password: `keyless123`)
+2. **Open Browser**: Navigate to `192.168.4.1` (or any URL - captive portal redirects)
+3. **Select Network**: Choose your home WiFi from the scan results
+4. **Enter Password**: Input your WiFi password and click "Connect"
+5. **Done!**: ESP32 saves credentials and restarts as WiFi client
+
+### Web Dashboard Features
+
+Once connected to your WiFi, access the dashboard at `http://<ESP32-IP>/`:
+
+- **Device Management**: View, rename, or delete paired iPhones
+- **Activity Log**: See last 50 lock/unlock events with timestamps
+- **Live Settings**:
+  - Unlock RSSI Threshold (-100 to -50 dBm)
+  - Lock RSSI Threshold (-100 to -50 dBm)
+  - Lock Timeout (5-60 seconds)
+  - Weak Signal Count (1-10)
+- **System Status**: WiFi signal, uptime, NTP sync status
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/` | Dashboard HTML |
+| GET | `/api/devices` | List all paired devices |
+| POST | `/api/devices/{id}/name` | Rename a device |
+| DELETE | `/api/devices/{id}` | Delete a device |
+| GET | `/api/log` | Last 50 activity entries |
+| GET | `/api/settings` | Current settings |
+| POST | `/api/settings` | Update settings |
+| GET | `/api/status` | System status |
+
+---
+
 ## 🚀 How It Works
 
 ### 1. **Initial Setup Phase**
 ```
-Power On → Check EEPROM → No devices found → 30s Pairing Window
+Power On → Check NVS → No devices found → 30s Pairing Window
 ```
 
 ### 2. **Device Learning**
 - ESP32 advertises as "ESPKV7 Tracker" (fitness device)
 - iPhone connects via Bluetooth settings
 - System extracts iPhone's IRK during secure pairing
-- IRK stored in EEPROM with auto-generated device name
+- IRK stored in NVS with auto-generated device name
 - System restarts for clean BLE initialization
 - Now, you can "forget" the device in iOS and remove it (your iOS Device will be identified via the extracted IRK)
 
@@ -205,10 +248,12 @@ pio device monitor
 
 ### Library Dependencies
 ```ini
-lib_deps = 
-    h2zero/NimBLE-Arduino@^1.4.0
+lib_deps =
     ESP32 BLE Arduino
-    EEPROM
+    Preferences
+    WebServer
+    DNSServer
+    WiFi
 ```
 
 ## 🔧 Configuration
@@ -217,13 +262,21 @@ lib_deps =
 ```cpp
 #define MAX_DEVICES 10           // Maximum stored devices
 #define PAIRING_TIMEOUT_MS 30000 // 30-second pairing window
+#define MAX_LOG_ENTRIES 50       // Activity log size
 ```
 
-### Proximity Settings
+### Proximity Settings (Adjustable via Web Dashboard)
 ```cpp
-const int RSSI_THRESHOLD = -80;          // ~15-20m detection range
-const unsigned long PROXIMITY_TIMEOUT = 10000; // 10s timeout
-const int WEAK_SIGNAL_THRESHOLD = 3;    // Hysteresis filtering
+int RSSI_UNLOCK_THRESHOLD = -90;         // Default unlock threshold
+int RSSI_LOCK_THRESHOLD = -80;           // Default lock threshold
+unsigned long PROXIMITY_TIMEOUT = 10000; // 10s timeout (adjustable 5-60s)
+int WEAK_SIGNAL_THRESHOLD = 3;           // Hysteresis filtering (1-10)
+```
+
+### WiFi AP Settings
+```cpp
+#define AP_SSID "ESP32-Keyless-Setup"    // Setup AP name
+#define AP_PASS "keyless123"              // Setup AP password
 ```
 
 ### Hardware Pins
@@ -277,20 +330,23 @@ The system uses iPhone's BLE privacy features for secure device identification:
 
 ### Code Architecture
 ```cpp
-// Core Components
-- Dynamic IRK extraction and storage
-- Dual-mode BLE (Server for pairing, Scanner for detection)
-- Automotive-grade proximity algorithms
-- Reset-reason based state management
-- Hardware watchdog integration
+// Core Components (v7.1)
+src/
+├── main.cpp           // Main logic, BLE scanning, lock/unlock control
+├── storage.h          // NVS-based persistent storage (devices, settings, log)
+├── audit_log.h        // Ring buffer event logging with NTP time
+├── wifi_manager.h     // WiFi client + AP setup mode (captive portal)
+└── web_server.h       // Dashboard + REST API endpoints
 ```
 
 ### Advanced Features
 - **Hysteresis Filtering**: Prevents false triggers from signal fluctuations
-- **Multi-device Support**: Handles multiple iPhones simultaneously  
+- **Multi-device Support**: Handles multiple iPhones simultaneously
 - **Graceful Degradation**: Continues operation if one device fails
-- **Memory Management**: Efficient EEPROM usage with wear leveling
+- **Memory Management**: NVS with automatic wear leveling
 - **Power Management**: Optimized for automotive 12V systems
+- **Web Dashboard**: Real-time monitoring and configuration
+- **Captive Portal**: Easy first-time WiFi setup
 
 ## 🔒 Security Considerations
 
@@ -324,11 +380,12 @@ The system uses iPhone's BLE privacy features for secure device identification:
 
 ## 📈 Performance Metrics
 
-- **Detection Range**: ~2-5 meters (adjustable via RSSI threshold)
+- **Detection Range**: ~2-15 meters (adjustable via RSSI threshold in web dashboard)
 - **Response Time**: <3 seconds from approach to unlock
 - **Power Consumption**: ~80mA during scanning, ~120mA during pairing
-- **Memory Usage**: 87% Flash, 12% RAM (ESP32-D0WD-V3)
+- **Memory Usage**: 52% Flash, 19% RAM (ESP32-D0WD-V3 with huge_app partition)
 - **Supported Devices**: Up to 10 iPhones simultaneously
+- **Activity Log**: Last 50 events with timestamps (NTP synced)
 
 ## 🤝 Contributing
 

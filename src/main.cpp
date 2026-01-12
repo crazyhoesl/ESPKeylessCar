@@ -1,13 +1,15 @@
 /*
- * ESP32 Dynamic iPhone Keyless System v7 (Open Source Ready)
+ * ESP32 Dynamic iPhone Keyless System v7.1
  * Author: crazyhoesl
  * Date: 27. Juli 2025
- * 
+ * Updated: January 2026 - Added Web Dashboard
+ *
  * Features:
  * - Dynamic IRK learning via BLE pairing
  * - Up to 10 devices supported
- * - EEPROM storage for persistent IRKs
- * - 1-minute pairing window on startup
+ * - NVS storage for persistent IRKs + Audit Log
+ * - Web Dashboard for device management
+ * - WiFi client with NTP time sync
  * - LED status feedback
  * - Full serial debugging
  */
@@ -28,6 +30,12 @@
 #include "esp_bt_main.h"
 #include "esp_bt_defs.h"
 #include "EEPROM.h"
+
+// New modules for Web Dashboard
+#include "storage.h"
+#include "audit_log.h"
+#include "wifi_manager.h"
+#include "web_server.h"
 
 // ========================================
 // CONFIGURATION
@@ -50,15 +58,16 @@ const int UNLOCK_BUTTON_PIN = 18;
 
 // Keyless system parameters
 const int SCAN_TIME = 3;
-const unsigned long PROXIMITY_TIMEOUT = 10000;
-const int RSSI_UNLOCK_THRESHOLD = -90;  // Öffnen bei schwächerem Signal (größere Reichweite)
-const int RSSI_LOCK_THRESHOLD = -80;    // Schließen bei stärkerem Signal (kleinere Reichweite)
+// Default values - actual values loaded from storage.settings
+unsigned long PROXIMITY_TIMEOUT = 10000;
+int RSSI_UNLOCK_THRESHOLD = -90;  // Öffnen bei schwächerem Signal (größere Reichweite)
+int RSSI_LOCK_THRESHOLD = -80;    // Schließen bei stärkerem Signal (kleinere Reichweite)
 const unsigned long POWER_OFF_DELAY = 10000;
 const unsigned long UNLOCK_DELAY = 500;
 const unsigned long LOCK_STABILIZATION_DELAY = 10;
 
-// Hysteresis parameters
-const int WEAK_SIGNAL_THRESHOLD = 3;
+// Hysteresis parameters - WEAK_SIGNAL_THRESHOLD loaded from storage.settings
+int WEAK_SIGNAL_THRESHOLD = 3;
 const unsigned long WEAK_SIGNAL_RESET_TIME = 5000;
 
 // ========================================
@@ -121,6 +130,15 @@ volatile DeviceHysteresis deviceHysteresis[MAX_DEVICES];
 // LED control
 unsigned long lastLedBlink = 0;
 bool ledState = false;
+
+// ========================================
+// WEB DASHBOARD MODULES
+// ========================================
+Storage storage;
+AuditLog auditLog;
+WifiManager wifiManager;
+DashboardServer dashboardServer;
+int lastUnlockDevice = -1;  // Track which device triggered last unlock
 
 // ========================================
 // LED CONTROL FUNCTIONS
@@ -214,10 +232,10 @@ bool loadDevicesFromEEPROM() {
 void addDevice(uint8_t* irk, const char* name) {
     if (numKnownDevices >= MAX_DEVICES) {
         Serial.println("❌ Maximum device limit reached!");
-        blinkPattern(2, 1000, 500); // 2x long blink = EEPROM full
+        blinkPattern(2, 1000, 500); // 2x long blink = storage full
         return;
     }
-    
+
     // Check if device already exists
     for (int i = 0; i < numKnownDevices; i++) {
         if (memcmp(knownDevices[i].irk, irk, 16) == 0) {
@@ -225,16 +243,19 @@ void addDevice(uint8_t* irk, const char* name) {
             return;
         }
     }
-    
-    // Add new device
+
+    // Add new device to legacy array
     memcpy(knownDevices[numKnownDevices].irk, irk, 16);
     strncpy(knownDevices[numKnownDevices].name, name, 15);
     knownDevices[numKnownDevices].name[15] = '\0';
     numKnownDevices++;
-    
+
+    // Also save to NVS storage
+    storage.addDevice(irk, name);
+
     Serial.printf("✅ Added device: %s\n", name);
-    saveDevicesToEEPROM();
-    
+    saveDevicesToEEPROM();  // Keep EEPROM as backup
+
     blinkPattern(3, 200, 200); // 3x short blink = device added
 }
 
@@ -314,6 +335,11 @@ void triggerLock() {
     lockTriggered = true;
     lockTriggerTime = millis();
     Serial.println("🔒 Lock triggered");
+
+    // Log lock event
+    if (lastUnlockDevice >= 0 && lastUnlockDevice < numKnownDevices) {
+        auditLog.logEvent(lastUnlockDevice, ACTION_LOCK, -99);
+    }
 }
 
 void triggerUnlock() {
@@ -322,6 +348,8 @@ void triggerUnlock() {
     digitalWrite(UNLOCK_BUTTON_PIN, LOW);
     unlockTriggered = true;
     Serial.println("🔓 Unlock triggered");
+
+    // Log unlock event (device and RSSI set by scan callback)
 }
 
 void handleAllPhonesGone(const char* reason) {
@@ -509,6 +537,8 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
                         lockTriggered = false;
                         unlockTriggered = false;
                         pendingLock = false;
+                        lastUnlockDevice = matchedDevice;  // Track device for logging
+                        auditLog.logEvent(matchedDevice, ACTION_UNLOCK, rssi);  // Log unlock
                         Serial.println("🔓 Welcome! Activating unlock sequence...");
                     }
                 } else if (rssi <= RSSI_LOCK_THRESHOLD) {
@@ -718,36 +748,79 @@ void startKeylessMode() {
 void setup() {
     Serial.begin(115200);
     delay(1000);
-    
+
     Serial.println("=======================================");
-    Serial.println("🔵 ESP32 Dynamic Keyless System v7");
+    Serial.println("🔵 ESP32 Dynamic Keyless System v7.1");
+    Serial.println("    + Web Dashboard");
     Serial.println("=======================================");
-    
-    // Initialize EEPROM
+
+    // Initialize EEPROM (for migration)
     EEPROM.begin(EEPROM_SIZE);
-    
+
+    // Initialize NVS Storage
+    if (!storage.begin()) {
+        Serial.println("Failed to initialize NVS storage!");
+    }
+
+    // Load settings from NVS and apply to global variables
+    storage.loadSettings();
+    RSSI_UNLOCK_THRESHOLD = storage.settings.rssiUnlockThreshold;
+    RSSI_LOCK_THRESHOLD = storage.settings.rssiLockThreshold;
+    PROXIMITY_TIMEOUT = storage.settings.proximityTimeout * 1000UL;  // Convert to ms
+    WEAK_SIGNAL_THRESHOLD = storage.settings.weakSignalThreshold;
+
     // Initialize pins
     pinMode(LED_PIN, OUTPUT);
     pinMode(KEY_POWER_PIN, OUTPUT);
     pinMode(LOCK_BUTTON_PIN, OUTPUT);
     pinMode(UNLOCK_BUTTON_PIN, OUTPUT);
-    
+
     setLED(false);
     digitalWrite(KEY_POWER_PIN, LOW);
     digitalWrite(LOCK_BUTTON_PIN, LOW);
     digitalWrite(UNLOCK_BUTTON_PIN, LOW);
-    
+
     // Initialize watchdog
     esp_task_wdt_init(30, true);
     esp_task_wdt_add(NULL);
     Serial.println("🐕 Watchdog enabled (30s timeout)");
-    
+
     // Check reset reason to avoid endless restart loop
     esp_reset_reason_t resetReason = esp_reset_reason();
     Serial.printf("🔍 Reset reason: %d\n", resetReason);
-    
-    // Load existing devices
-    bool hasDevices = loadDevicesFromEEPROM();
+
+    // Initialize Audit Log
+    auditLog.begin(&storage);
+
+    // Initialize WiFi Manager
+    wifiManager.begin(&auditLog);
+    wifiManager.connect();
+
+    // Load existing devices from NVS first
+    bool hasNvsDevices = storage.loadDevices();
+
+    // Migrate from EEPROM if NVS is empty but EEPROM has data
+    bool hasDevices = false;
+    if (!hasNvsDevices) {
+        hasDevices = loadDevicesFromEEPROM();
+        if (hasDevices && numKnownDevices > 0) {
+            Serial.println("Migrating devices from EEPROM to NVS...");
+            for (int i = 0; i < numKnownDevices; i++) {
+                storage.addDevice(knownDevices[i].irk, knownDevices[i].name);
+            }
+            Serial.printf("Migrated %d devices to NVS\n", numKnownDevices);
+        }
+    } else {
+        // Sync NVS devices to legacy array for compatibility
+        hasDevices = true;
+        numKnownDevices = storage.deviceCount;
+        for (int i = 0; i < numKnownDevices; i++) {
+            memcpy(knownDevices[i].irk, storage.devices[i].irk, 16);
+            strncpy(knownDevices[i].name, storage.devices[i].name, 15);
+            knownDevices[i].name[15] = '\0';
+        }
+        Serial.printf("Loaded %d devices from NVS\n", numKnownDevices);
+    }
     
     if (hasDevices && numKnownDevices > 0) {
         Serial.printf("✅ Found %d known devices\n", numKnownDevices);
@@ -768,6 +841,10 @@ void setup() {
         Serial.println("🔄 Starting pairing mode - connect your iPhone now!");
         startPairingMode();
     }
+
+    // Start Web Dashboard Server
+    dashboardServer.begin(&storage, &auditLog, &wifiManager);
+    Serial.println("🌐 Web Dashboard ready");
 }
 
 // ========================================
@@ -776,7 +853,11 @@ void setup() {
 
 void loop() {
     esp_task_wdt_reset();
-    
+
+    // Update WiFi and Web Server
+    wifiManager.update();
+    dashboardServer.handleClient();
+
     if (currentMode == MODE_PAIRING) {
         // Check pairing timeout
         if (millis() - pairingStartTime >= PAIRING_TIMEOUT_MS) {
