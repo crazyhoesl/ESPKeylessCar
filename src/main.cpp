@@ -860,14 +860,18 @@ void loop() {
 
     if (currentMode == MODE_PAIRING) {
         // Check pairing timeout - but NOT in AP mode (WiFi setup)
-        if (!wifiManager.isAPMode() && millis() - pairingStartTime >= PAIRING_TIMEOUT_MS) {
-            if (numKnownDevices > 0) {
+        if (millis() - pairingStartTime >= PAIRING_TIMEOUT_MS) {
+            Serial.printf("⏱️ Timeout reached. AP Mode: %s\n", wifiManager.isAPMode() ? "YES" : "NO");
+            if (wifiManager.isAPMode()) {
+                // Don't restart during WiFi setup - just reset timer silently
+                pairingStartTime = millis();
+            } else if (numKnownDevices > 0) {
                 Serial.println("⏰ Pairing timeout - restarting ESP32 for clean keyless mode");
                 delay(2000);
-                ESP.restart(); // Clean restart for proper BLE scanner initialization
+                ESP.restart();
             } else {
                 Serial.println("⏰ Pairing timeout - no devices paired, restarting pairing...");
-                pairingStartTime = millis(); // Restart pairing window
+                pairingStartTime = millis();
             }
         }
         
