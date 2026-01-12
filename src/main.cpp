@@ -528,8 +528,8 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
                         }
                     }
                     
-                    Serial.printf("📱 %s detected (RSSI: %d)\n", deviceName, rssi);
-                    
+                    // Removed frequent serial output to prevent TX buffer blocking WiFi
+
                     // Immediate unlock on first strong signal
                     if (!wasAnyPhoneNearby && anyPhoneNearby) {
                         setLED(true);
@@ -562,8 +562,8 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
                             }
                         }
                         
-                        Serial.printf("📱 %s weak signal (RSSI: %d)\n", deviceName, rssi);
-                        
+                        // Removed: Serial output blocked WiFi when no monitor connected
+
                         if (!anyPhoneNearby) {
                             handleAllPhonesGone("weak signal hysteresis");
                         }
@@ -572,7 +572,7 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
                     // RSSI between -90 and -80: Maintain current state, update last seen time
                     if (deviceNearby[matchedDevice]) {
                         lastSeenTime[matchedDevice] = millis();
-                        Serial.printf("📱 %s maintaining connection (RSSI: %d)\n", deviceName, rssi);
+                        // Removed: Serial output blocked WiFi when no monitor connected
                     }
                 }
             }
@@ -885,13 +885,12 @@ void loop() {
     } else { // MODE_KEYLESS
         // BLE scan for known devices with error handling
         esp_task_wdt_reset();
-        Serial.println("🔍 Scanning for known devices...");
-        
+        // Removed frequent serial output to prevent TX buffer blocking WiFi
+
         BLEScanResults foundDevices;
         try {
             foundDevices = pBLEScan->start(SCAN_TIME, false);
             esp_task_wdt_reset();
-            Serial.printf("📡 Scan completed, found %d devices\n", foundDevices.getCount());
         } catch (...) {
             Serial.println("⚠️ BLE scan failed, reinitializing scanner...");
             esp_task_wdt_reset();
