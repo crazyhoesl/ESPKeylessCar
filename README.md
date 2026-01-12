@@ -1,4 +1,4 @@
-# ESP32 Dynamic iPhone Keyless System v7.1
+# ESP32 Dynamic iPhone Keyless System v7.2
 
 🚗 **Smart Proximity-Based Car Access Control using iPhone BLE**
 
@@ -330,7 +330,7 @@ The system uses iPhone's BLE privacy features for secure device identification:
 
 ### Code Architecture
 ```cpp
-// Core Components (v7.1)
+// Core Components (v7.2)
 src/
 ├── main.cpp           // Main logic, BLE scanning, lock/unlock control
 ├── storage.h          // NVS-based persistent storage (devices, settings, log)

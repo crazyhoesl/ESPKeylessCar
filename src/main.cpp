@@ -1,5 +1,5 @@
 /*
- * ESP32 Dynamic iPhone Keyless System v7.1
+ * ESP32 Dynamic iPhone Keyless System v7.2
  * Author: crazyhoesl
  * Date: 27. Juli 2025
  * Updated: January 2026 - Added Web Dashboard
@@ -750,7 +750,7 @@ void setup() {
     delay(1000);
 
     Serial.println("=======================================");
-    Serial.println("🔵 ESP32 Dynamic Keyless System v7.1");
+    Serial.println("🔵 ESP32 Dynamic Keyless System v7.2");
     Serial.println("    + Web Dashboard");
     Serial.println("=======================================");
 
