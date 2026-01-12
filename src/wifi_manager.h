@@ -12,6 +12,7 @@
 #include <DNSServer.h>
 #include <Preferences.h>
 #include <time.h>
+#include <esp_task_wdt.h>
 #include "audit_log.h"
 
 // AP Configuration
@@ -207,6 +208,7 @@ private:
 
             int attempts = 0;
             while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+                esp_task_wdt_reset();  // Feed watchdog during connection
                 delay(500);
                 Serial.print(".");
                 attempts++;
@@ -319,6 +321,7 @@ public:
         struct tm timeinfo;
         int retries = 0;
         while (!getLocalTime(&timeinfo) && retries < 10) {
+            esp_task_wdt_reset();  // Feed watchdog during NTP sync
             delay(500);
             retries++;
         }

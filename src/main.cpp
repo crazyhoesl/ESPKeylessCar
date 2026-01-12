@@ -859,8 +859,8 @@ void loop() {
     dashboardServer.handleClient();
 
     if (currentMode == MODE_PAIRING) {
-        // Check pairing timeout
-        if (millis() - pairingStartTime >= PAIRING_TIMEOUT_MS) {
+        // Check pairing timeout - but NOT in AP mode (WiFi setup)
+        if (!wifiManager.isAPMode() && millis() - pairingStartTime >= PAIRING_TIMEOUT_MS) {
             if (numKnownDevices > 0) {
                 Serial.println("⏰ Pairing timeout - restarting ESP32 for clean keyless mode");
                 delay(2000);
